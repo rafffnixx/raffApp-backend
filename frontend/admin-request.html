@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - raffApp</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        table, th, td {
+            border: 1px solid black;
+        }
+        th, td {
+            padding: 10px;
+            text-align: center;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+        }
+        button {
+            padding: 5px 10px;
+            border: none;
+            border-radius: 5px;
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Admin Dashboard</h1>
+    </header>
+    <main>
+        <table id="requestsTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Product Name</th>
+                    <th>Quantity</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="6">Loading requests...</td>
+                </tr>
+            </tbody>
+        </table>
+    </main>
+    <script>
+        document.addEventListener("DOMContentLoaded", async () => {
+            const requestsTable = document.querySelector("#requestsTable tbody");
+
+            // Fetch all requests
+            async function fetchRequests() {
+                try {
+                    const response = await fetch("http://localhost:3000/api/requests");
+                    const requests = await response.json();
+
+                    // Populate the table
+                    requestsTable.innerHTML = "";
+                    requests.forEach(request => {
+                        const row = document.createElement("tr");
+
+                        row.innerHTML = `
+                            <td>${request.id}</td>
+                            <td>${request.username}</td>
+                            <td>${request.product_name}</td>
+                            <td>${request.quantity}</td>
+                            <td>${request.status}</td>
+                            <td>
+                                <select class="status-dropdown" data-id="${request.id}">
+                                    <option value="Pending" ${request.status === 'Pending' ? 'selected' : ''}>Pending</option>
+                                    <option value="Approved" ${request.status === 'Approved' ? 'selected' : ''}>Approved</option>
+                                    <option value="Rejected" ${request.status === 'Rejected' ? 'selected' : ''}>Rejected</option>
+                                </select>
+                            </td>
+                        `;
+                        requestsTable.appendChild(row);
+                    });
+
+                    // Add event listeners to dropdowns
+                    addStatusChangeListeners();
+                } catch (error) {
+                    console.error("Error fetching requests:", error);
+                    requestsTable.innerHTML = "<tr><td colspan='6'>Failed to load requests.</td></tr>";
+                }
+            }
+
+            // Handle status change
+            function addStatusChangeListeners() {
+                const dropdowns = document.querySelectorAll(".status-dropdown");
+                dropdowns.forEach(dropdown => {
+                    dropdown.addEventListener("change", async (event) => {
+                        const requestId = event.target.getAttribute("data-id");
+                        const newStatus = event.target.value;
+
+                        try {
+                            const response = await fetch(`http://localhost:3000/api/requests/${requestId}`, {
+                                method: "PATCH",
+                                headers: {
+                                    "Content-Type": "application/json",
+                                },
+                                body: JSON.stringify({ status: newStatus }),
+                            });
+
+                            if (response.ok) {
+                                alert("Status updated successfully!");
+                                fetchRequests(); // Refresh the table
+                            } else {
+                                alert("Failed to update status.");
+                            }
+                        } catch (error) {
+                            console.error("Error updating status:", error);
+                            alert("An error occurred while updating the status.");
+                        }
+                    });
+                });
+            }
+
+            // Load requests on page load
+            fetchRequests();
+        });
+    </script>
+</body>
+</html>
