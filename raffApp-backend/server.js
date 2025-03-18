@@ -5,9 +5,13 @@ const { Pool } = require('pg'); // PostgreSQL library
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
+
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+
 
 // Middleware
 app.use(cors());
@@ -67,6 +71,20 @@ pool.query(createServicesTable, (err) => {
         console.log('Services table is ready');
     }
 });
+
+//update unhashed password
+const updatePassword = async () => {
+    const plainPassword = '4325';
+    const hashedPassword = await bcrypt.hash(plainPassword, 10);
+
+    const query = 'UPDATE admin SET password = $1 WHERE username = $2';
+    const values = [hashedPassword, 'RAFFADMIN'];
+
+    await pool.query(query, values);
+    console.log('Password updated successfully!');
+};
+
+updatePassword();
 
 // Create Requests Table
 const createRequestsTable = `
@@ -273,6 +291,184 @@ app.get('/api/requests/:username', async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
+
+// Define the rate limiter
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limit each IP to 5 login requests per window
+    message: 'Too many login attempts. Please try again later.',
+});
+
+// Create Admin Table
+const createAdminTable = `
+    CREATE TABLE IF NOT EXISTS admin (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'admin'
+    );
+`;
+
+pool.query(createAdminTable, (err) => {
+    if (err) {
+        console.error('Error creating admin table:', err.message);
+    } else {
+        console.log('Admin table is ready');
+    }
+});
+
+// Add Admin Credentials
+const addAdmin = async () => {
+    const username = process.env.ADMIN_USERNAME || 'ADMIN';
+    const plainPassword = process.env.ADMIN_PASSWORD || 'default_password';
+
+    try {
+        const hashedPassword = await bcrypt.hash(plainPassword, 10);
+
+        const query = `
+            INSERT INTO admin (username, password, role)
+            VALUES ($1, $2, 'admin')
+            ON CONFLICT (username) DO NOTHING;
+        `;
+
+        const values = [username, hashedPassword];
+        await pool.query(query, values);
+
+        console.log('Admin credentials added successfully!');
+    } catch (error) {
+        console.error('Error adding admin credentials:', error.message);
+    }
+};
+
+addAdmin();
+
+///add admin route
+app.post('/api/admin/add', async (req, res) => {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Missing username or password.' });
+    }
+
+    try {
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const query = `
+            INSERT INTO admin (username, password, role)
+            VALUES ($1, $2, 'admin')
+            ON CONFLICT (username) DO NOTHING;
+        `;
+        const values = [username, hashedPassword];
+
+        await pool.query(query, values);
+
+        res.json({ message: `Admin ${username} added successfully!` });
+    } catch (error) {
+        console.error('Error adding admin:', error.message);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+
+
+// Admin login route
+app.post('/api/admin/login', async (req, res) => {
+    const { username, password } = req.body;
+
+    try {
+        const query = 'SELECT * FROM admin WHERE username = $1';
+        const result = await pool.query(query, [username]);
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid username or password.' });
+        }
+
+        const admin = result.rows[0];
+
+        // Validate password
+        const isValidPassword = await bcrypt.compare(password, admin.password);
+        if (!isValidPassword) {
+            return res.status(401).json({ error: 'Invalid username or password.' });
+        }
+
+        // Generate JWT token for admin
+        const token = jwt.sign(
+            { id: admin.id, username: admin.username, role: admin.role },
+            process.env.JWT_SECRET, // Use a secret key from environment variables
+            { expiresIn: '1h' } // Token expires in 1 hour
+        );
+
+        res.json({ token });
+    } catch (error) {
+        console.error('Error during admin login:', error.message);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+
+// Admin Profile Route
+app.get('/api/admin/profile', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1]; // Extract the token from the Authorization header
+
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized: No token provided.' });
+    }
+
+    try {
+        // Verify the token
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        // Query the database to get admin details
+        const query = 'SELECT id, username, role FROM admin WHERE id = $1';
+        const result = await pool.query(query, [decoded.id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Admin not found.' });
+        }
+
+        res.json(result.rows[0]); // Return the admin details
+    } catch (error) {
+        console.error('Error verifying token:', error.message);
+        res.status(401).json({ error: 'Unauthorized: Invalid token.' });
+    }
+});
+
+app.get('/api/admin/all', async (req, res) => {
+    try {
+        const query = 'SELECT id, username, role FROM admin;';
+        const result = await pool.query(query);
+
+        res.json(result.rows); // Return all admin details
+    } catch (error) {
+        console.error('Error fetching admins:', error.message);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+//verify admin tocken
+const verifyAdminToken = (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized: No token provided.' });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        // Ensure the user is an admin
+        if (decoded.role !== 'admin') {
+            return res.status(403).json({ error: 'Forbidden: Not an admin.' });
+        }
+
+        req.admin = decoded; // Attach admin info to the request
+        next();
+    } catch (error) {
+        console.error('Error verifying token:', error.message);
+        res.status(401).json({ error: 'Unauthorized: Invalid token.' });
+    }
+};
+
 
 
 // Start the Server
