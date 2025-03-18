@@ -1,4 +1,8 @@
+providers = ["nodejs", "python"]
+
+
 [providers]
+
 nodejs = true
 [build]
 cmd = "npm run build"
