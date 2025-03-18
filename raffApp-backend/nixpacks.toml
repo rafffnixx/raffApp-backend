@@ -1,0 +1,8 @@
+[providers]
+nodejs = true
+[build]
+cmd = "npm run build"
+[start]
+cmd = "serve -s build -l 8080"
+[providers]
+nodejs = true
